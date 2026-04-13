@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Godotエンジンを用いたマルチGPU分散描画システムの実装と検証 — 橋本 空輝</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../assets/css/style.css">
+  <link rel="icon" href="../../assets/images/favicon.svg" type="image/svg+xml">
+</head>
+<body>
+
+  <!-- Navigation -->
+  <nav class="nav">
+    <div class="nav__inner">
+      <a href="../../index.html" class="nav__logo">S. Hashimoto</a>
+      <button class="nav__toggle" aria-label="メニュー" aria-expanded="false">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+      <ul class="nav__links">
+        <li><a href="../../index.html" class="nav__link">ホーム</a></li>
+        <li><a href="../../works.html" class="nav__link">実績</a></li>
+        <li><a href="../../research.html" class="nav__link">研究</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <!-- Article -->
+  <article class="container">
+    <header class="article-header">
+      <div class="article-header__date">2026-03-07</div>
+      <h1 class="article-header__title">Godotエンジンを用いたマルチGPU分散描画システムの実装と検証</h1>
+    </header>
+    <div class="article-content">
+      <h1>概要</h1>
+<p>本稿は、VR環境における描画負荷をアプリケーション層で複数GPU間に分散するシステムの実装結果を報告する。メインプロセス（RTX 2080 Ti）がシーン全体の描画・合成を担当し、サブプロセス（GTX 1080）が指定メッシュのみをオフロードする二層構造を採用した。プロセス間通信に共有メモリとWin32 Auto-Reset Eventを使用し、深度テスト付きアルファ合成により両GPU描画結果を統合する。メインプロセス144fps、サブプロセス約100fpsで安定動作する実装を達成した。</p>
+<p>本稿では、システムのアーキテクチャ、同期機構の設計、データ転送パイプライン、深度合成アルゴリズム、およびGodotエンジンへの3つの新規API追加について報告する。</p>
+<h1>はじめに</h1>
+<h2>問題設定</h2>
+<p>VRアプリケーションの描画には高い計算負荷が伴う。HMDの解像度は3K～6Kに達し、ユーザーが物体を間近に視認するため高ポリゴン密度を要求される。従来的なシングルGPU方式では、これらの制約下での120fps以上のフレームレート維持が困難である。</p>
+<p>既存のドライバベースマルチGPU技術（SLI/CrossFire）は、同一系統の同一型番GPU群を前提とし、外部メモリ拡張やExternalMemory機構を要求する。異種GPU（例：RTX 2080 Ti + GTX 1080）の組み合わせでは動作しない。このため、アプリケーション層で明示的に役割を分担する新たなアプローチが必要である。</p>
+<h2>先行研究と既存技術</h2>
+<h3>マルチGPUレンダリング技術の分類</h3>
+<p>マルチGPUレンダリング技術は大別して三種類に分類される。</p>
+<p><strong>AFR（Alternate Frame Rendering）/SFR（Split Frame Rendering）</strong>: 2000年代のドライバベース技術であり、AFRは各フレームを異なるGPUに割り当て、SFRはフレーム内の領域を分割して描画する。この時代は計算能力が主たるボトルネックであったため、複数GPUで並列計算することで計算量の線形スケーリングを実現しようとした。これらの手法では描画結果がGPUに留まるため、プロセス間のデータ転送は最小限に抑えられていた。</p>
+<p><strong>Sort-last rendering</strong>: グラフィクス分野で提案されたリサーチテーマであり、各GPUが異なる部分ジオメトリを独立して描画し、最終合成ステップで結果をマージする手法である。ピクセルレベルの深度テストを伴うため、メインメモリ経由での転送が必然的になり、PCIeバス帯域（当時のPCIe 2.0で最大8GB/s）が新たなボトルネックとなる。レイテンシが無視できなくなるため、実時間性が要求されるアプリケーションでは採用されなかった。</p>
+<p><strong>OpenGL 異種GPU 対応（GL_NV_gpu_affinity、GL_AMD_gpu_association）</strong>: 2010年代にNVIDIAとAMDが導入したアプリケーション層での異種GPU割り当てAPIである。しかし、VRAM間データ転送がやはりメインメモリ経由であることから、大容量テクスチャアセットを多用するコンテンツでは帯域枯渇が頻発するようになった。</p>
+<h3>従来の問題の本質</h3>
+<p>これらの技術が普及しなかった根本原因は、<strong>計算能力とVRAM容量のバランスの変化を見落とした点</strong>にある。2000年代～2010年代は、VRAM容量（256MB～1GB）に対して計算能力が相対的に不足していたため、AFR/SFRはこの計算能力の不足という時代的ボトルネックに最適化された技術だった。</p>
+<p>ところが、VRおよび高解像度コンテンツの普及により、状況は根本的に反転している。HMD解像度が3K～6Kに達するにつれてテクスチャメモリが枯渇する傾向が見られ、一方ではGPU計算能力が飽和の傾向を示すようになった。特にVRでは、ユーザーがオブジェクトを間近に視認するため詳細なテクスチャ解像度が必須となり、VRAM容量の枯渇が顕著な問題として浮上している。</p>
+<h3>VR特有の特性</h3>
+<p>従来のマルチGPU技術（特にSort-last）が実用化されなかった理由の一つは、<strong>入力遅延への感度の高さ</strong>にある。映像ゲーム（FPS等）では遅延が非常に重要であり、メインメモリを経由してのデータ転送による遅延増加は致命的なものとなっていた。</p>
+<p>これに対して、VRSNS（メタバース型ソーシャルVR）は異なる特性を持つシステムである。ユーザーアバター群の描画は、ユーザー入力（ヘッドトラッキング）への直接的な反応性を必要としない。アバターの動作はネットワーク同期遅延（通常数十ms）に支配されるため、フレームレンダリング側の遅延（数ms～十数ms）は相対的に無視可能なレベルにとどまる。これによって初めて、メインメモリ経由のデータ転送という従来の制約が許容可能な領域へ入ることになる。</p>
+<h2>設計方針</h2>
+<p>プロセス分離型の採用を決定した。理由は二つである。第一に、GPU障害時の隔離が可能になることである。サブプロセスがドライバエラーで停止しても、メインプロセスは継続稼働し、サブプロセスのみ再起動できるようになる。第二に、GPU割り当ての柔軟性が実現されることである。サブプロセスを <code>--gpu-index</code> オプションで起動するだけで特定GPUへ割り当てられ、特殊なドライバ機能を要しなくなる。</p>
+<p>本システムがVRSNS向けに適用可能である背景は、Sort-last系の手法が従来不採用だった理由（入力遅延）がこのドメインでは許容可能となるという認識に基づいている。</p>
+<h1>システムアーキテクチャ</h1>
+<h2>全体構成</h2>
+<p>本システムは以下の3要素で構成される。</p>
+<ul>
+<li><strong>メインプロセス</strong>：通常のGodotエンジン。シーン全体の描画、フレームデータの受信、深度合成を担当。3つのスレッド（メイン、ワーカー、レンダー）が協調動作する。</li>
+<li><strong>サブプロセス</strong>：指定メッシュのみを描画する最小限のGodotエンジン。フレームバッファをキャプチャし、共有メモリへ書き込む。</li>
+<li><strong>Win32共有メモリ</strong>：プロセス間のフレームデータ転送媒体。カラーバッファ、デプスバッファ、トランスフォーム情報、初期化ペイロードを格納。</li>
+</ul>
+<pre class="mermaid">
+graph LR
+    subgraph Main["メインプロセス（RTX 2080 Ti）"]
+        direction LR
+        MT["メインスレッド<br/>_process()"]
+        WT["ワーカースレッド<br/>SharedMem → Staging memcpy"]
+        RT["レンダースレッド<br/>Vulkan コマンド発行"]
+        CE["CompositorEffect<br/>深度合成 Compute Shader"]
+    end
+
+    subgraph SHM["Win32 共有メモリ"]
+        CB["カラー + デプス<br/>ダブルバッファ"]
+        TB["トランスフォーム"]
+    end
+
+    subgraph Sub["サブプロセス（GTX 1080）"]
+        direction LR
+        SR["SubViewport<br/>オフロードメッシュ描画"]
+        FC["FrameCaptureEffect<br/>カラー/デプス読み出し"]
+        SW["共有メモリ書き込み"]
+    end
+    
+    MT -->|"姿勢書き込み"| TB
+    TB -->|"姿勢読み取り"| SR
+    SR --> FC
+    FC -->|"非同期 Readback"| SW
+    SW -->|"データ書き込み"| CB
+    CB -->|"イベント通知 →<br/>memcpy"| WT
+    WT -->|"完了フラグ"| MT
+    MT -->|"DMA コマンド投入"| RT
+    RT --> CE
+</pre>
+<p><img src="image_placeholder_system_architecture.png" alt="システムアーキテクチャ図"></p>
+<h2>共有メモリレイアウト</h2>
+<p>共有メモリは固定長で設計される。レイアウトは表1のとおりである。</p>
+<table>
+<thead>
+<tr>
+<th>領域</th>
+<th>サイズ</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Transform Buffer</td>
+<td>80B</td>
+<td>カメラ位置姿勢（28B）、FOV/Near/Far（12B）、オブジェクト変換（40B）</td>
+</tr>
+<tr>
+<td>Color Buffer</td>
+<td>約33.1MB</td>
+<td>RGBA16F 1920×1080 × 2（ダブルバッファ）</td>
+</tr>
+<tr>
+<td>Depth Buffer</td>
+<td>約16.5MB</td>
+<td>float32 1920×1080 × 2（ダブルバッファ）</td>
+</tr>
+<tr>
+<td>Init Buffer</td>
+<td>2048B</td>
+<td>JSON形式初期化情報</td>
+</tr>
+</tbody>
+</table>
+<p>ダブルバッファリングにより、write_indexとread_indexを位相反転することで、データ競合を構造的に排除する。</p>
+<h2>同期機構</h2>
+<p>プロセス間同期には2つのWin32 Auto-Reset Eventを使用する（表2）。</p>
+<table>
+<thead>
+<tr>
+<th>イベント</th>
+<th>方向</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>TransformReady</td>
+<td>メイン→サブ</td>
+<td>カメラ姿勢更新完了の通知。サブはポーリング検出</td>
+</tr>
+<tr>
+<td>FrameReady</td>
+<td>サブ→メイン</td>
+<td>カラー/デプス書き込み完了の通知。メインワーカースレッドがブロッキング待機</td>
+</tr>
+</tbody>
+</table>
+<p>プロセス内スレッド間の同期には、Mutex保護された<code>new_data_ready</code>フラグを使用する。ロック区間は状態フラグのみに限定し、大容量memcpy処理中はロックを保持しない。</p>
+<h1>データ転送パイプライン</h1>
+<h2>フロー</h2>
+<p>フレームデータ転送は4段階で進行する。</p>
+<pre class="mermaid">
+graph LR
+    subgraph SubProc["サブプロセス（GTX 1080）"]
+        S1["GPU 描画"]
+        S2["非同期 Readback<br/>GPU VRAM → CPU"]
+        S3["共有メモリ書き込み<br/>ダブルバッファ"]
+        S4["frame_ready_event<br/>SetEvent()"]
+    end
+    subgraph MainProc["メインプロセス（RTX 2080 Ti）"]
+        M1["ワーカースレッド<br/>WaitForSingleObject()"]
+        M2["memcpy<br/>共有メモリ → ステージングバッファ"]
+        M3["メインスレッド<br/>完了フラグ検出"]
+        M4["レンダースレッド<br/>vkCmdCopyBufferToImage"]
+        M5["GPU DMA 転送<br/>ステージング → テクスチャ"]
+        M6["CompositorEffect<br/>深度合成"]
+    end
+    S1 --> S2 --> S3 --> S4
+    S4 -->|"イベントシグナル"| M1
+    M1 --> M2
+    M2 -->|"new_data_ready = true"| M3
+    M3 -->|"call_on_render_thread()"| M4
+    M4 --> M5 --> M6
+</pre>
+<p><img src="image_placeholder_data_transfer_pipeline.png" alt="データ転送パイプライン"></p>
+<p>各段階は異なるスレッド/ハードウェアユニットで実行され、パイプライン化による並列処理が実現される。</p>
+<h2>Godotエンジンへの新規API</h2>
+<p>標準の<code>texture_update()</code>API内では毎フレーム一時ステージングバッファを同期的に確保・破棄するため、大容量データ転送に不適切である。本システムでは、RenderingDeviceに3つのAPIを追加した。</p>
+<h3>staging_buffer_create</h3>
+<p><code>VK_BUFFER_USAGE_TRANSFER_SRC_BIT</code> + <code>HOST_VISIBLE | HOST_COHERENT</code>メモリを持つ永続ステージングバッファを作成する。毎フレームの一時確保を廃止し、メモリ確保コストを初期化時の1回に集約する。</p>
+<h3>staging_buffer_get_ptr</h3>
+<p><code>vkMapMemory</code>により永続マッピングしたポインタを返却する。以降、毎フレームはmemcpyのみでデータ書き込みが可能となり、Map/Unmapの反復コストを排除する。</p>
+<h3>texture_copy_from_staging_buffer</h3>
+<p><code>vkCmdCopyBufferToImage</code>コマンドを記録する。CPU側はコマンド投入のみを担当し（1ms未満）、実転送はGPU DMAエンジンが描画パイプラインと独立して実行される。</p>
+<h2>ワーカースレッドの動作</h2>
+<p>GDScript Thread として起動されたワーカースレッドは、以下のループで動作する。</p>
+<ol>
+<li><code>frame_ready_event.wait_event(100)</code>でサブプロセスイベント待機</li>
+<li>イベント受信後、<code>current_buffer_index</code>に基づきダブルバッファの該当側を選択</li>
+<li><code>memcpy</code>で共有メモリ→永続ステージングポインタへコピー</li>
+<li>Mutexをロック、<code>new_data_ready = true</code>を設定</li>
+<li><code>current_buffer_index</code>をトグル</li>
+</ol>
+<p>約65msの重いmemcpy処理はワーカースレッドで実行されるため、メイン・レンダースレッドをブロックしない。</p>
+<h2>メインスレッドの処理</h2>
+<p><code>_process()</code>内での処理は3ステップで軽量化されている。</p>
+<ol>
+<li><code>worker_mutex</code>ロック、<code>new_data_ready</code>フラグ確認後<code>false</code>に戻す</li>
+<li><code>RenderingServer.call_on_render_thread()</code>経由でDMA転送コマンド投入</li>
+<li><code>copy_queued</code>フラグ設定、次フレーム先頭でダブルバッファインデックスを入れ替え</li>
+</ol>
+<p>全処理は1ms未満で完了する。</p>
+<h1>サブプロセスの実装</h1>
+<h2>初期化フロー</h2>
+<p>サブプロセスはIPCManager経由で<code>OS.create_process()</code>で起動される。起動引数に<code>--gpu-index 1</code>を含め、セカンダリGPUへ割り当てる。<code>--render-thread separate</code>オプションで描画コマンド発行を専用スレッドに委譲する。</p>
+<p>起動後、サブプロセスは共有メモリバッファとイベントを<code>open_buffer()</code> / <code>open_event()</code>で開く。Init Bufferからメッシュ・マテリアルリソースパスを取得し、シーンを再構築する。</p>
+<p>IPCManager はウォッチドッグ機能を備え、サブプロセスの生存を2秒間隔で確認する。停止時は最大3回まで自動再起動を試みる。</p>
+<h2>フレームループ</h2>
+<p>サブプロセスの<code>_process()</code>は3ステップで構成される。</p>
+<ol>
+<li><strong>フレーム完了通知</strong>：前フレームの非同期Readback完了確認後、<code>frame_ready_event.set_event()</code>でシグナル発行</li>
+<li><strong>姿勢同期</strong>：<code>transform_ready_event.check_event()</code>でメイン側更新を検出、トランスフォーム適用</li>
+<li><strong>非同期キャプチャ要求</strong>：FrameCaptureEffectへダブルバッファオフセット設定、<code>current_buffer_index</code>トグル</li>
+</ol>
+<p>フレーム完了通知を次フレーム冒頭で行う理由は、前フレームのGPU読み出し完了を確実に待つためである。</p>
+<h2>FrameCaptureEffect：GPU読み出しの実装</h2>
+<p>FrameCaptureEffectはCompositorEffectとしてSubViewport描画パイプラインの<code>POST_TRANSPARENT</code>フェーズにアタッチされる。</p>
+<p>Godot内部レンダバッファは<code>TEXTURE_USAGE_CAN_COPY_FROM_BIT</code>フラグを有しないため、直接コピーが不可能である。本システムは2段階で回避する。</p>
+<h3>段階1：Compute Shaderによるステージングテクスチャへのコピー</h3>
+<p><code>frame_capture_copy.glsl</code>が内部バッファ（<code>STORAGE_BIT</code>アクセス可能）から<code>STORAGE_BIT + CAN_COPY_FROM_BIT</code>を持つステージングテクスチャへコピーする。深度バッファ（D32_SFLOAT形式）は<code>sampler2D</code>経由で読み出し、R32_SFLOAT ステージングテクスチャへ<code>imageStore()</code>で書き込まれる。</p>
+<h3>段階2：非同期テクスチャ読み出し</h3>
+<p>ステージングテクスチャから<code>request_texture_read_async()</code>で GPU VRAM→CPU への非同期読み出しを要求する。読み出しデータは共有メモリダブルバッファの該当オフセットへ直接書き込まれる。</p>
+<h1>深度合成</h1>
+<h2>アルゴリズム</h2>
+<p>メインプロセス側CompositorEffect（<code>CompositorEffectIPC</code>）は、POST_TRANSPARENTフェーズでCompute Shaderを実行する。4つの入力を受け取る。</p>
+<table>
+<thead>
+<tr>
+<th>バインディング</th>
+<th>種別</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>image2D (読み書き)</td>
+<td>メインカラーバッファ</td>
+</tr>
+<tr>
+<td>1</td>
+<td>sampler2D</td>
+<td>メイン深度バッファ</td>
+</tr>
+<tr>
+<td>2</td>
+<td>sampler2D</td>
+<td>サブカラーテクスチャ</td>
+</tr>
+<tr>
+<td>3</td>
+<td>sampler2D</td>
+<td>サブ深度テクスチャ</td>
+</tr>
+</tbody>
+</table>
+<p>合成は3ステップで行われる。</p>
+<h3>ステップ1：透明画素の早期棄却</h3>
+<p>サブ側アルファ値≤0.001の場合、サブ描画が存在しないと判定。メイン側カラーをそのまま維持する。</p>
+<h3>ステップ2：深度比較</h3>
+<p>Godot/Vulkanは Reverse-Z 深度バッファを使用する。深度値が大きいほど物体が近い。条件<code>d_sub &gt; d_main</code>でサブが手前と判定される。</p>
+<h3>ステップ3：アルファ合成</h3>
+<p>サブが手前の場合、Pre-multiplied Alpha Over演算を適用する。</p>
+<p>$$C_{\text{out}} = C_{\text{sub}} + C_{\text{main}} \times (1 - A_{\text{sub}})$$<br>
+$$A_{\text{out}} = A_{\text{sub}} + A_{\text{main}} \times (1 - A_{\text{sub}})$$</p>
+<p>サブが奥にある場合はメイン側カラーを維持する。</p>
+<p><img src="image_placeholder_depth_compositing.png" alt="深度合成アルゴリズム"></p>
+<h2>Compute Shader の並列処理</h2>
+<p>Compute Shaderは8×8のスレッドグループで各ピクセルを並列処理し、ピクセルレベルの正確な合成を実現する。</p>
+<h1>MGPUMeshInstance3D</h1>
+<p>オフロード対象メッシュの指定は、<code>MGPUMeshInstance3D</code>コンポーネントとして集約される。シーン構築者は通常の<code>MeshInstance3D</code>の代わりにこのノードをアタッチするだけで、内部IPCを意識せずにオフロードを設定できる。</p>
+<p><code>MGPUMeshInstance3D</code>は<code>_ready()</code>時に自身を非表示に設定し（メインプロセスでは非表示）、<code>mgpu_mesh_instances</code>グループに登録される。メインプロセスはこのグループからノードを検出し、<code>get_init_payload()</code>でメッシュ・マテリアルパスを取得、Init Buffer経由でサブプロセスに送信する。サブプロセスは受信したパスからリソースをロードし、自身のシーン内で描画を行う。</p>
+<p><img src="image_placeholder_mgpu_mesh_instance.png" alt="MGPUMeshInstance3D構成"></p>
+<h1>プロトコル設計</h1>
+<h2>CMD FIFO</h2>
+<p>Main ↔ Sub の双方向コマンド送信に、固定スロットFIFOを使用する（表3）。</p>
+<table>
+<thead>
+<tr>
+<th>パラメータ</th>
+<th>値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>スロット数</td>
+<td>256</td>
+</tr>
+<tr>
+<td>スロットサイズ</td>
+<td>256B</td>
+</tr>
+<tr>
+<td>ヘッダ</td>
+<td>16B（head, tail, slot_count, slot_size）</td>
+</tr>
+<tr>
+<td>合計サイズ</td>
+<td>約64KB</td>
+</tr>
+</tbody>
+</table>
+<p>プロデューサはtailにデータ書き込み後、tailを更新する。部分読み出しを防止するためデータ書き込み→tail更新の順序を厳密に実行する。コンシューマはheadを参照してスロットを読み取り、読み取り後にheadを更新する。</p>
+<p>対応コマンド：<code>CMD_LOAD_RESOURCE</code>、<code>CMD_SPAWN_ENTITY</code> / <code>CMD_DESTROY_ENTITY</code>、<code>CMD_ANIM_PLAY</code> / <code>CMD_ANIM_STOP</code> / <code>CMD_ANIM_SEEK</code>、<code>CMD_HANDSHAKE</code>、<code>CMD_SHUTDOWN</code></p>
+<h2>FRAME Triple Buffer</h2>
+<p>高頻度フレームデータ（カメラ姿勢、トランスフォーム群、スケルトンポーズ、ブレンドシェイプ）の交換にはトリプルバッファを使用する（表4）。</p>
+<table>
+<thead>
+<tr>
+<th>パラメータ</th>
+<th>値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>スロット数</td>
+<td>3</td>
+</tr>
+<tr>
+<td>スロットサイズ</td>
+<td>64KB</td>
+</tr>
+<tr>
+<td>ヘッダ</td>
+<td>16B（write_slot, ready_slot, read_slot, slot_size）</td>
+</tr>
+</tbody>
+</table>
+<p>プロデューサはwrite_slotにデータ書き込み、ready_slot = write_slotに設定してデータを公開、次の空きスロットをwrite_slotに割り当てる。コンシューマはready_slotをread_slotにスワップして読み取る。write/ready/read の3スロットローテーションにより、ロックなしでプロデューサとコンシューマの同時動作が実現される。</p>
+<h1>ハードウェア構成と性能</h1>
+<h2>実験環境</h2>
+<table>
+<thead>
+<tr>
+<th>要素</th>
+<th>仕様</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>メインGPU</td>
+<td>NVIDIA RTX 2080 Ti</td>
+</tr>
+<tr>
+<td>サブGPU</td>
+<td>NVIDIA GTX 1080</td>
+</tr>
+<tr>
+<td>解像度</td>
+<td>1920×1080</td>
+</tr>
+<tr>
+<td>転送データ形式</td>
+<td>RGBA16F + float32</td>
+</tr>
+</tbody>
+</table>
+<p>異種GPU構成を前提とすることで、余剰GPU の有効活用と構成コストの削減が可能になる。SLIブリッジなどの物理接続は不要で、PCIeスロットに挿すだけで運用できる。</p>
+<h2>測定結果</h2>
+<ul>
+<li>メインプロセス：144fps（VSync上限）安定稼働</li>
+<li>サブプロセス：約100fpsで安定動作</li>
+<li>ワーカースレッド memcpy：約65ms/フレーム</li>
+<li>メインスレッド処理：1ms未満</li>
+<li>転送帯域：1920×1080 RGBA16F + float32で約50MB/フレーム</li>
+</ul>
+<p>PCIe 3.0バスは理論値16GB/sであり、50MB/フレームは十分に処理可能である。ワーカースレッドでのmemcpyが重いにもかかわらず、メインスレッドの<code>_process()</code>処理が軽量であるため、メイン描画フレームレートへの影響は生じない。</p>
+<p><img src="image_placeholder_performance_results.png" alt="性能測定結果"></p>
+<h1>考察</h1>
+<h2>設計上の重要な決定事項</h2>
+<p>本システムで採用した主要な設計原則を整理する。</p>
+<ol>
+<li><strong>プロセス分離</strong>：GPU障害の隔離と柔軟な割り当てを実現</li>
+<li><strong>共有メモリ + イベント同期</strong>：ドライバ依存性を排除した通信基盤</li>
+<li><strong>永続ステージングバッファ</strong>：毎フレームのメモリ確保・解放コストを排除</li>
+<li><strong>ワーカースレッド分離</strong>：重いmemcpyをメイン・レンダースレッドから隔離</li>
+<li><strong>GPU DMA転送</strong>：CPU同期をコマンド投入に置換</li>
+<li><strong>Compute Shader合成</strong>：GPU並列処理によるピクセル単位の正確な合成</li>
+</ol>
+<h2>適用可能性</h2>
+<p>これらの設計原則はVRに限定されない。映像合成、遠隔レンダリング、計測可視化など、転送と描画が絡む高負荷リアルタイムシステム全般に適用可能である。</p>
+<p>特に、プロセス分離型アーキテクチャはネットワーク化が容易であり、サブ描画を別マシンへ移行することも可能である。</p>
+<h2>本研究の新規性</h2>
+<p>本システムの新規性は、<strong>VRSNS特有の制約条件下で従来不採用だったSort-last型手法を復権させた点</strong>にある。以下、その根拠を述べる。</p>
+<h3>新たなボトルネック構造</h3>
+<p>2000年代のSort-lastが不採用だった理由は、入力遅延感度の高さにあり、背景には計算能力がボトルネックだったという事情が存在していた。しかし、VRSNSでは状況が異なる。</p>
+<ul>
+<li><strong>入力遅延の許容度が高い</strong>：アバター描画がネットワーク同期遅延（50～100ms）に支配されるため、描画側の遅延（数ms）は相対的に無視可能になる</li>
+<li><strong>VRAMが真のボトルネック</strong>：高解像度テクスチャ、複数アバターモデル、詳細ジオメトリにより、単一GPUのVRAM（典型的に8～12GB）が先に枯渇する傾向が見られる</li>
+</ul>
+<p>このボトルネック構造の反転により、Sort-last系手法が初めて実用的になる可能性が生じた。</p>
+<h3>動的メモリ配置による新規なアプローチ</h3>
+<p>本実装を基盤として、さらなる最適化が可能である。その方法は、<strong>カメラとアバターの距離・向きを動的に監視し、VRAM配置を自動決定する戦略</strong>を採用することにある。</p>
+<p>具体的には以下の手順で実現される。</p>
+<ol>
+<li><strong>距離・視野角に基づく優先度決定</strong>：各アバターとカメラの距離およびヘッド方向との角度を計算する</li>
+<li><strong>メイン/サブGPUへの動的割り当て</strong>：視野内で近距離のアバターはメインGPUにロードし、遠距離のアバターはサブGPUへ配置する</li>
+<li><strong>シームレスな転送</strong>：サブで描画中のアバターがカメラに接近した場合、メインへテクスチャをコピーしてから描画主体をシフトさせることで、視覚的な不連続性を排除する</li>
+<li><strong>メモリ解放</strong>：視野外になったアバターをサブから除去し、VRAM圧力を軽減する</li>
+</ol>
+<p>このアプローチは従来のSort-lastにはない動的特性をもたらす。描画対象の距離や視認性に応じてGPU間のメモリ配置を実時間で最適化することにより、固定的な分割では実現不可能な総VRAM効率の向上が実現される。特にVRメタバースでは、ユーザー周辺のアバター数が時々刻々変化するため、このような動的戦略の効果が顕著に現れるはずである。</p>
+<p><img src="image_placeholder_dynamic_memory_allocation.png" alt="動的メモリ配置戦略"></p>
+<h1>まとめ</h1>
+<p>本稿は、Godotエンジン上でマルチGPU分散描画を実装したシステムの設計と実装結果を報告した。プロセス間通信に共有メモリとWin32 Eventを採用し、永続ステージングバッファとGPU DMA転送によりデータ転送パイプラインを最適化している。Compute Shaderによる深度合成により、両GPU描画結果をピクセル単位で正確に統合する。</p>
+<p>メインプロセス144fps、サブプロセス約100fpsで安定動作し、メイン側処理は1ms未満に収まるため、VR用途に適した性能が達成されている。</p>
+<p>本システムの本質的な意義は、VRSNSドメイン固有の特性（入力遅延許容度の高さ、VRAMボトルネック）に基づき、従来不採用だったSort-last型手法を復権させたことにある。さらに、カメラ位置やユーザー視野に基づくリアルタイムなVRAM配置最適化により、将来的な動的マルチメッシュ対応が実現可能になり、高密度アバター環境での描画効率の大幅な向上が期待される。</p>
+    </div>
+    
+  </article>
+
+  <!-- Footer -->
+  <footer class="footer" style="margin-top: var(--space-section);">
+    <div class="container">
+      <p>&copy; 2025 橋本 空輝. All rights reserved.</p>
+    </div>
+  </footer>
+
+  <script src="../../assets/js/main.js"></script>
+  <script type="module">
+    // Load Mermaid.js only when mermaid blocks exist
+    if (document.querySelector('.mermaid')) {
+      import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs')
+        .then(function (mod) {
+          mod.default.initialize({
+            startOnLoad: false,
+            theme: 'default',
+            fontFamily: '"Inter", "Noto Sans JP", sans-serif'
+          });
+          mod.default.run({ querySelector: '.mermaid' }).then(function() {
+            // Add click-to-zoom functionality to mermaid diagrams
+            document.querySelectorAll('.mermaid').forEach(function(el) {
+              el.style.cursor = 'zoom-in';
+              el.title = 'クリックして拡大';
+              el.addEventListener('click', function() {
+                const svg = el.querySelector('svg');
+                if (!svg) return;
+
+                // Create modal
+                const modal = document.createElement('div');
+                modal.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.9);z-index:10000;display:flex;align-items:center;justify-content:center;cursor:zoom-out;';
+
+                // Clone SVG for modal
+                const clonedSvg = svg.cloneNode(true);
+                clonedSvg.style.cssText = 'max-width:95%;max-height:95%;background:white;border-radius:8px;';
+
+                modal.appendChild(clonedSvg);
+                document.body.appendChild(modal);
+
+                // Close on click
+                modal.addEventListener('click', function() {
+                  document.body.removeChild(modal);
+                });
+
+                // Close on Escape key
+                const closeOnEscape = function(e) {
+                  if (e.key === 'Escape') {
+                    document.body.removeChild(modal);
+                    document.removeEventListener('keydown', closeOnEscape);
+                  }
+                };
+                document.addEventListener('keydown', closeOnEscape);
+              });
+            });
+          });
+        });
+    }
+  </script>
+</html>

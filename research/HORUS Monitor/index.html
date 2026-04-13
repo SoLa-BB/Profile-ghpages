@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HORUS Monitor：ヘッドマウントディスプレイを用いた自動運転車遠隔監視システムの提案 — 橋本 空輝</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../assets/css/style.css">
+  <link rel="icon" href="../../assets/images/favicon.svg" type="image/svg+xml">
+</head>
+<body>
+
+  <!-- Navigation -->
+  <nav class="nav">
+    <div class="nav__inner">
+      <a href="../../index.html" class="nav__logo">S. Hashimoto</a>
+      <button class="nav__toggle" aria-label="メニュー" aria-expanded="false">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+      <ul class="nav__links">
+        <li><a href="../../index.html" class="nav__link">ホーム</a></li>
+        <li><a href="../../works.html" class="nav__link">実績</a></li>
+        <li><a href="../../research.html" class="nav__link">研究</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <!-- Article -->
+  <article class="container">
+    <header class="article-header">
+      <div class="article-header__date">2026-03-08</div>
+      <h1 class="article-header__title">HORUS Monitor：ヘッドマウントディスプレイを用いた自動運転車遠隔監視システムの提案</h1>
+    </header>
+    <div class="article-content">
+      <h2>1. 研究の背景と課題</h2>
+<p>自動運転車の社会実装に向けた取り組みが加速しており、特にレベル4自動運転車は、運転者が車内に搭乗しないことを前提とした運行形態となります。このため、異常時や判断困難な場面に備えて、遠隔地の人間オペレーターによる監視と介入支援が義務付けられています。Waymoをはじめとした自動運転事業者でも、現場オペレーターによる遠隔支援システムが構築され、走行継続の可否判断や障害物回避支援などを人間が行う運用が採られています。</p>
+<p>遠隔監視員は、車両から送信される複数のカメラ映像やセンサ情報を確認しながら、必要に応じて非常停止などの判断を下します。したがって、遠隔監視環境には高い視認性と操作性、さらに長時間利用に耐えうる作業快適性が要求されます。</p>
+<p>しかし、現在の一般的な遠隔監視環境は、複数台の物理ディスプレイを机上やラックに固定設置する構成となっています。これには以下のような大きな課題が存在します。</p>
+<ul>
+<li><strong>設備の移動が困難:</strong> 監視を行う場所が特定の部屋や施設に強く限定される。</li>
+<li><strong>個別最適化の難しさ:</strong> モニターの配置、高さ、視距離などを監視員ごとに細かく調整することが難しく、個人の身体的特徴や作業姿勢の違い、好みに十分に対応できない。</li>
+</ul>
+<p>これらの制約は、監視員の作業負担の増大や監視品質の低下に直結する可能性があります。</p>
+<hr>
+<h2>2. 関連研究とこれまでのアプローチ</h2>
+<p>本研究の背景として、自動運転車の遠隔監視用UI、およびヘッドマウントディスプレイ（HMD）を用いた情報提示に関する複数の研究が存在します。</p>
+<h3>2.1 自動運転車遠隔監視のユーザインタフェース</h3>
+<p>遠隔監視オペレーターが使用するユーザインタフェース（UI）の設計は、自動運転の運行安全を支える極めて重要な要素です。これまでの研究では、UIに表示すべき情報の種類や優先順位の整理が試みられてきました。</p>
+<ul>
+<li><strong>情報の精査:</strong> Graf and Hussmannは、テレオペレーションに必要とされる情報要素を80項目から20項目へと絞り込み、物体検知、走行経路、車両位置情報などの優先提示項目を明示しました。</li>
+<li><strong>デザイン指針:</strong> Tener and Lanirは、地図表示や周囲情報の重畳、警告提示といったGUI要素の設計指針を提示しています。</li>
+<li><strong>判断効率の向上:</strong> Lindgrenらは、情報の階層化、色による強調表示、緊急時の情報切り替え方針がユーザの判断効率に影響することを明らかにしました。</li>
+</ul>
+<p>国内の実運用事例としても、永平寺町でのレベル4自動運転や、高速道路上の自動運転トラックの異常時遠隔対応実証などが報告されています。</p>
+<h3>2.2 HMDを用いたバーチャルディスプレイ提示</h3>
+<p>物理モニタを固定配置する構成に対し、XR技術を活用して仮想的に複数の情報提示領域を視界内に配置するアプローチも注目されています。</p>
+<ul>
+<li><strong>空間的状況認識:</strong> Boutらは、共有型自動運転車の遠隔オペレーター向けにHMD UIを試作し、被験者の空間的状況認識が向上することを報告しました。</li>
+<li><strong>マルチモーダルUI:</strong> Bouzónらは、視覚情報に加えて聴覚や触覚フィードバックを統合したマルチモーダルUIを提案し、操作満足度の向上を確認しています。</li>
+</ul>
+<p>また、仮想ディスプレイをパーソナルスペース内に配置する方が視認効率が高いことや、垂直方向の画面配置は視野内の情報分離に有効であることなどが示されています。</p>
+<hr>
+<h2>3. HORUS Monitorの提案とシステム設計</h2>
+<p>本研究では、物理的なディスプレイに依存せず、監視用ディスプレイを任意の位置に配置可能な遠隔監視システム「HORUS Monitor」を提案します。ネットワーク経由でストリーミングされる車両からの映像を、HMDのパススルー機能を用いて実空間上の任意の位置にバーチャルディスプレイとして重畳表示します。</p>
+<p>本システムは、映像を受信する「Receiver」、映像を送信する「Sender」、両者を接続する「シグナリングサーバ（Node.js）」の3要素で構成されています。</p>
+<h3>3.1 Receiver (Meta Quest用アプリ)</h3>
+<p>ReceiverはMeta Quest 3上で稼働するスタンドアロンのアプリケーションです。Meta XR SDKを用いてUnityで実装されています。</p>
+<ul>
+<li>WebRTC for Unityを利用して映像を受信・デコードします。</li>
+<li>映像ストリームごとに個別のバーチャルウィンドウ（UnityのRawImageインスタンス）を生成・描画します。</li>
+<li>モニタの位置はHMD座標系で管理されるため、ユーザが移動したり姿勢を変えたりしても、空間上の同じ位置に安定して表示され続けます。</li>
+<li>ユーザはコントローラやハンドジェスチャを使い、ウィンドウを掴んで移動させたり、拡大縮小ジェスチャでサイズを自由に変更することが可能です。</li>
+</ul>
+<h3>3.2 Sender (Webアプリ)</h3>
+<p>Senderは、HTMLとJavascriptからなる簡素なWebベースのアプリケーションです。車載カメラ映像（動画ファイル）をリアルタイムにストリーミング送信する役割を担います。</p>
+<ul>
+<li>ユーザは送信動画の解像度をピクセル単位で指定し、任意の動画ファイルを選択できます。</li>
+<li><code>&lt;video&gt;</code> 要素の再生状態を <code>captureStream()</code> メソッドで直接ストリーム化し、WebRTC APIを用いてReceiverへ送信します。</li>
+<li>1つのPeerConnection内で複数のMediaStreamTrackを同時に送信できるよう実装されており、複数カメラからの映像受信に対応しています。</li>
+<li>STUNサーバを設定することでNAT越えにも対応しています。</li>
+</ul>
+<hr>
+<h2>4. 評価実験</h2>
+<p>システムの実用性とユーザビリティを検証するため、大学生・大学院生9名を対象に被験者実験を実施しました。</p>
+<h3>4.1 実験条件と被験者属性</h3>
+<ul>
+<li>被験者の78%は運転免許を持たないか、ほとんど運転をしない層。</li>
+<li>被験者の55.6%がHMDを使用したことがない初心者。</li>
+<li>比較対象として「ノートPCの液晶ディスプレイ」を使用。</li>
+<li>タスク：映像内の「コンビニエンスストアの数」を数える監視タスク。</li>
+</ul>
+<h3>4.2 定量評価（SUSスコア）</h3>
+<p>システムの使いやすさを客観的に測る「System Usability Scale (SUS)」を用いた評価結果は以下の通りです。</p>
+<table>
+<thead>
+<tr>
+<th>評価対象</th>
+<th>平均SUSスコア</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>平面ディスプレイ</td>
+<td>80.25</td>
+</tr>
+<tr>
+<td>HORUS Monitor</td>
+<td>77.47</td>
+</tr>
+</tbody>
+</table>
+<p>総合スコアでは平面ディスプレイが僅かに上回りましたが、「使いやすさ」や「機能の統合性」の項目ではHORUS Monitorが高い評価を得ました。</p>
+<h3>4.3 定性評価（ユーザーのコメント）</h3>
+<ul>
+<li><strong>ポジティブ:</strong> 「自由な大きさ・位置で見られるため見やすい」「手軽に配置設定できるのが魅力」。</li>
+<li><strong>ネガティブ:</strong> 「HMDに慣れていないため長時間は辛い」「平面ディスプレイの方が見やすかった」。</li>
+</ul>
+<hr>
+<h2>5. 結論と今後の課題</h2>
+<p>本研究により、HMDを用いたモニタの自由な配置・サイズ調整が、柔軟な遠隔監視環境の実現に寄与することが示唆されました。一方で、デバイスへの慣れや身体的負荷が課題として残っています。</p>
+<p><strong>今後の展望:</strong></p>
+<ul>
+<li>長時間利用時の身体的負荷や疲労度の検証。</li>
+<li>ユーザやタスクに応じた最適な配置・設計指針（UIレイアウト）の確立。</li>
+<li>情報の選別や抽象化による視覚的過負荷の防止。</li>
+</ul>
+    </div>
+    
+  </article>
+
+  <!-- Footer -->
+  <footer class="footer" style="margin-top: var(--space-section);">
+    <div class="container">
+      <p>&copy; 2025 橋本 空輝. All rights reserved.</p>
+    </div>
+  </footer>
+
+  <script src="../../assets/js/main.js"></script>
+  <script type="module">
+    // Load Mermaid.js only when mermaid blocks exist
+    if (document.querySelector('.mermaid')) {
+      import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs')
+        .then(function (mod) {
+          mod.default.initialize({
+            startOnLoad: false,
+            theme: 'default',
+            fontFamily: '"Inter", "Noto Sans JP", sans-serif'
+          });
+          mod.default.run({ querySelector: '.mermaid' }).then(function() {
+            // Add click-to-zoom functionality to mermaid diagrams
+            document.querySelectorAll('.mermaid').forEach(function(el) {
+              el.style.cursor = 'zoom-in';
+              el.title = 'クリックして拡大';
+              el.addEventListener('click', function() {
+                const svg = el.querySelector('svg');
+                if (!svg) return;
+
+                // Create modal
+                const modal = document.createElement('div');
+                modal.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.9);z-index:10000;display:flex;align-items:center;justify-content:center;cursor:zoom-out;';
+
+                // Clone SVG for modal
+                const clonedSvg = svg.cloneNode(true);
+                clonedSvg.style.cssText = 'max-width:95%;max-height:95%;background:white;border-radius:8px;';
+
+                modal.appendChild(clonedSvg);
+                document.body.appendChild(modal);
+
+                // Close on click
+                modal.addEventListener('click', function() {
+                  document.body.removeChild(modal);
+                });
+
+                // Close on Escape key
+                const closeOnEscape = function(e) {
+                  if (e.key === 'Escape') {
+                    document.body.removeChild(modal);
+                    document.removeEventListener('keydown', closeOnEscape);
+                  }
+                };
+                document.addEventListener('keydown', closeOnEscape);
+              });
+            });
+          });
+        });
+    }
+  </script>
+</html>

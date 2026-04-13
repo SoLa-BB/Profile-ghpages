@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Loading… — 橋本 空輝</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/css/style.css">
+  <link rel="icon" href="assets/images/favicon.svg" type="image/svg+xml">
+</head>
+<body>
+
+  <!-- Navigation -->
+  <nav class="nav">
+    <div class="nav__inner">
+      <a href="index.html" class="nav__logo">S. Hashimoto</a>
+      <button class="nav__toggle" aria-label="メニュー" aria-expanded="false">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+      <ul class="nav__links">
+        <li><a href="index.html" class="nav__link">ホーム</a></li>
+        <li><a href="works.html" class="nav__link">実績</a></li>
+        <li><a href="research.html" class="nav__link">研究</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <!-- Article (populated by JS) -->
+  <article class="container">
+    <header class="article-header">
+      <div class="article-header__date" id="viewer-date"></div>
+      <h1 class="article-header__title" id="viewer-title">読み込み中…</h1>
+    </header>
+    <div class="article-content" id="viewer-content">
+      <p class="text-secondary">コンテンツを読み込んでいます…</p>
+    </div>
+  </article>
+
+  <!-- Footer -->
+  <footer class="footer" style="margin-top: var(--space-section);">
+    <div class="container">
+      <p>&copy; 2025 橋本 空輝. All rights reserved.</p>
+    </div>
+  </footer>
+
+  <script src="assets/js/main.js"></script>
+
+  <!-- Mermaid.js (loaded only when needed) -->
+  <script type="module">
+  (function () {
+    "use strict";
+
+    // =========================================================
+    // Lightweight Markdown → HTML parser (client-side)
+    // =========================================================
+
+    function escapeHtml(text) {
+      return text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function inlineMarkdown(text) {
+      // Images
+      text = text.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1">');
+      // Links
+      text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+      // Bold + Italic
+      text = text.replace(/\*{3}(.+?)\*{3}/g, "<strong><em>$1</em></strong>");
+      text = text.replace(/_{3}(.+?)_{3}/g, "<strong><em>$1</em></strong>");
+      // Bold
+      text = text.replace(/\*{2}(.+?)\*{2}/g, "<strong>$1</strong>");
+      text = text.replace(/_{2}(.+?)_{2}/g, "<strong>$1</strong>");
+      // Italic
+      text = text.replace(/\*(.+?)\*/g, "<em>$1</em>");
+      text = text.replace(/(?<!\w)_(.+?)_(?!\w)/g, "<em>$1</em>");
+      // Inline code
+      text = text.replace(/`([^`]+)`/g, "<code>$1</code>");
+      return text;
+    }
+
+    function parseTable(tableLines) {
+      function splitRow(line) {
+        line = line.trim();
+        if (line.startsWith("|")) line = line.slice(1);
+        if (line.endsWith("|")) line = line.slice(0, -1);
+        return line.split("|").map(function (c) { return c.trim(); });
+      }
+      if (tableLines.length < 2) return "";
+      var headers = splitRow(tableLines[0]);
+      var rows = tableLines.slice(2).map(splitRow);
+      var html = "<table><thead><tr>";
+      headers.forEach(function (h) { html += "<th>" + inlineMarkdown(h) + "</th>"; });
+      html += "</tr></thead><tbody>";
+      rows.forEach(function (row) {
+        html += "<tr>";
+        row.forEach(function (cell) { html += "<td>" + inlineMarkdown(cell) + "</td>"; });
+        html += "</tr>";
+      });
+      html += "</tbody></table>";
+      return html;
+    }
+
+    function markdownToHtml(text) {
+      var lines = text.split("\n");
+      var output = [];
+      var i = 0;
+      var hasMermaid = false;
+
+      while (i < lines.length) {
+        var line = lines[i];
+
+        // --- Fenced code blocks ---
+        var fenceMatch = line.match(/^(`{3,}|~{3,})(\w*)\s*$/);
+        if (fenceMatch) {
+          var fenceChar = fenceMatch[1][0];
+          var fenceLen = fenceMatch[1].length;
+          var lang = fenceMatch[2];
+          var codeLines = [];
+          i++;
+          while (i < lines.length) {
+            var closeRe = new RegExp("^" + (fenceChar === "`" ? "`" : "~") + "{" + fenceLen + ",}\\s*$");
+            if (closeRe.test(lines[i])) { i++; break; }
+            codeLines.push(lines[i]);
+            i++;
+          }
+          if (lang === "mermaid") {
+            hasMermaid = true;
+            output.push('<pre class="mermaid">\n' + codeLines.join("\n") + "\n</pre>");
+          } else {
+            var codeContent = codeLines.map(escapeHtml).join("\n");
+            if (lang) {
+              output.push('<pre><code class="language-' + lang + '">' + codeContent + "</code></pre>");
+            } else {
+              output.push("<pre><code>" + codeContent + "</code></pre>");
+            }
+          }
+          continue;
+        }
+
+        // --- Horizontal rule ---
+        if (/^(\*{3,}|-{3,}|_{3,})\s*$/.test(line)) {
+          output.push("<hr>");
+          i++;
+          continue;
+        }
+
+        // --- Headings ---
+        var headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
+        if (headingMatch) {
+          var level = headingMatch[1].length;
+          output.push("<h" + level + ">" + inlineMarkdown(headingMatch[2]) + "</h" + level + ">");
+          i++;
+          continue;
+        }
+
+        // --- Blockquote ---
+        if (line.startsWith(">")) {
+          var bqLines = [];
+          while (i < lines.length && (lines[i].startsWith(">") || lines[i].trim() === "")) {
+            if (lines[i].startsWith(">")) {
+              bqLines.push(lines[i].replace(/^>\s?/, ""));
+            } else if (bqLines.length) {
+              bqLines.push("");
+            } else {
+              break;
+            }
+            i++;
+            if (i < lines.length && !lines[i].startsWith(">") && lines[i].trim() !== "") break;
+          }
+          output.push("<blockquote>" + markdownToHtml(bqLines.join("\n")) + "</blockquote>");
+          continue;
+        }
+
+        // --- Unordered list ---
+        if (/^[*\-+]\s+/.test(line)) {
+          var items = [];
+          while (i < lines.length && /^[*\-+]\s+/.test(lines[i])) {
+            items.push("<li>" + inlineMarkdown(lines[i].replace(/^[*\-+]\s+/, "")) + "</li>");
+            i++;
+          }
+          output.push("<ul>\n" + items.join("\n") + "\n</ul>");
+          continue;
+        }
+
+        // --- Ordered list ---
+        if (/^\d+\.\s+/.test(line)) {
+          var olItems = [];
+          while (i < lines.length && /^\d+\.\s+/.test(lines[i])) {
+            olItems.push("<li>" + inlineMarkdown(lines[i].replace(/^\d+\.\s+/, "")) + "</li>");
+            i++;
+          }
+          output.push("<ol>\n" + olItems.join("\n") + "\n</ol>");
+          continue;
+        }
+
+        // --- Table ---
+        if (i + 1 < lines.length && line.indexOf("|") !== -1 && /^\|?\s*[-:]/.test(lines[i + 1])) {
+          var tLines = [];
+          while (i < lines.length && lines[i].indexOf("|") !== -1) {
+            tLines.push(lines[i]);
+            i++;
+          }
+          output.push(parseTable(tLines));
+          continue;
+        }
+
+        // --- Empty line ---
+        if (line.trim() === "") { i++; continue; }
+
+        // --- Paragraph ---
+        var paraLines = [];
+        while (i < lines.length && lines[i].trim() !== "") {
+          if (/^(#{1,6}\s|```|~~~|>|\*{3,}|-{3,}|_{3,}|[*\-+]\s|\d+\.\s)/.test(lines[i]) && paraLines.length) break;
+          paraLines.push(lines[i]);
+          i++;
+        }
+        if (paraLines.length) {
+          output.push("<p>" + inlineMarkdown(paraLines.join("<br>\n")) + "</p>");
+        }
+      }
+
+      return { html: output.join("\n"), hasMermaid: hasMermaid };
+    }
+
+    // =========================================================
+    // Front matter parser
+    // =========================================================
+
+    function parseFrontMatter(text) {
+      var match = text.match(/^---\s*\n([\s\S]*?)\n---\s*\n/);
+      var meta = {};
+      var content = text;
+      if (match) {
+        content = text.slice(match[0].length);
+        match[1].trim().split("\n").forEach(function (line) {
+          var idx = line.indexOf(":");
+          if (idx !== -1) {
+            meta[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+          }
+        });
+      }
+      return { meta: meta, content: content };
+    }
+
+    // =========================================================
+    // Embed generators (PDF / Slides)
+    // =========================================================
+
+    function generateEmbeds(meta) {
+      var parts = [];
+      if (meta.pdf) {
+        parts.push(
+          '<div class="embed-container" style="margin-top: var(--space-l);">' +
+          '<div class="embed-label" style="padding: var(--space-s) var(--space-s) 0;">論文 PDF</div>' +
+          '<object data="' + meta.pdf + '" type="application/pdf" width="100%" height="720">' +
+          '<p class="embed-fallback">PDFを表示できません。<a href="' + meta.pdf + '">PDFをダウンロード</a>してください。</p>' +
+          '</object></div>'
+        );
+      }
+      if (meta.slides) {
+        parts.push(
+          '<div class="embed-container" style="margin-top: var(--space-l);">' +
+          '<div class="embed-label" style="padding: var(--space-s) var(--space-s) 0;">発表スライド</div>' +
+          '<iframe src="' + meta.slides + '" width="100%" height="540" allowfullscreen></iframe>' +
+          '</div>'
+        );
+      }
+      return parts.join("\n");
+    }
+
+    // =========================================================
+    // Main: fetch MD, parse, render
+    // =========================================================
+
+    function getFileParam() {
+      var params = new URLSearchParams(window.location.search);
+      return params.get("file") || params.get("f");
+    }
+
+    function render(mdText) {
+      var parsed = parseFrontMatter(mdText);
+      var meta = parsed.meta;
+      var result = markdownToHtml(parsed.content);
+
+      var title = meta.title || "無題";
+      var dateStr = meta.date || "";
+
+      document.title = title + " — 橋本 空輝";
+      document.getElementById("viewer-title").textContent = title;
+      document.getElementById("viewer-date").textContent = dateStr;
+
+      var contentEl = document.getElementById("viewer-content");
+      contentEl.innerHTML = result.html;
+
+      // Embeds (PDF / Slides)
+      var embeds = generateEmbeds(meta);
+      if (embeds) {
+        contentEl.insertAdjacentHTML("afterend", embeds);
+      }
+
+      // Load Mermaid.js only when needed
+      if (result.hasMermaid) {
+        loadMermaid();
+      }
+    }
+
+    function loadMermaid() {
+      import("https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs")
+        .then(function (mod) {
+          mod.default.initialize({
+            startOnLoad: false,
+            theme: "default",
+            fontFamily: '"Inter", "Noto Sans JP", sans-serif'
+          });
+          mod.default.run({ querySelector: ".mermaid" });
+        })
+        .catch(function (err) {
+          console.error("Mermaid の読み込みに失敗しました:", err);
+        });
+    }
+
+    function showError(msg) {
+      document.getElementById("viewer-title").textContent = "エラー";
+      document.getElementById("viewer-content").innerHTML =
+        '<p style="color: var(--text-secondary);">' + msg + "</p>";
+      document.title = "エラー — 橋本 空輝";
+    }
+
+    // --- Init ---
+    var filePath = getFileParam();
+    if (!filePath) {
+      showError(
+        'ファイルが指定されていません。<br>' +
+        '<code>viewer.html?file=content/posts/my-article.md</code> のようにURLパラメータで指定してください。'
+      );
+    } else {
+      fetch(filePath)
+        .then(function (res) {
+          if (!res.ok) throw new Error("HTTP " + res.status + ": " + filePath);
+          return res.text();
+        })
+        .then(render)
+        .catch(function (err) {
+          showError("ファイルの読み込みに失敗しました: " + escapeHtml(err.message));
+        });
+    }
+  })();
+  </script>
+</body>
+</html>

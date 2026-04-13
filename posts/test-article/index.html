@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>テスト記事 — md2htmlの動作確認 — 橋本 空輝</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../assets/css/style.css">
+  <link rel="icon" href="../../assets/images/favicon.svg" type="image/svg+xml">
+</head>
+<body>
+
+  <!-- Navigation -->
+  <nav class="nav">
+    <div class="nav__inner">
+      <a href="../../index.html" class="nav__logo">S. Hashimoto</a>
+      <button class="nav__toggle" aria-label="メニュー" aria-expanded="false">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+      <ul class="nav__links">
+        <li><a href="../../index.html" class="nav__link">ホーム</a></li>
+        <li><a href="../../works.html" class="nav__link">実績</a></li>
+        <li><a href="../../research.html" class="nav__link">研究</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <!-- Article -->
+  <article class="container">
+    <header class="article-header">
+      <div class="article-header__date">2025-03-07</div>
+      <h1 class="article-header__title">テスト記事 — md2htmlの動作確認</h1>
+    </header>
+    <div class="article-content">
+      <h1>これはテスト記事です</h1>
+<p>md2html CLIの動作を確認するためのサンプル記事です。</p>
+<h2>機能テスト</h2>
+<h3>テキストの装飾</h3>
+<p>これは<strong>太字</strong>のテストです。これは<em>イタリック</em>のテストです。これは<code>インラインコード</code>のテストです。</p>
+<h3>リンクと画像</h3>
+<p><a href="../index.html">橋本空輝のポートフォリオ</a>へ戻る。</p>
+<h3>リスト</h3>
+<ul>
+<li>項目1: HCI</li>
+<li>項目2: VR/AR</li>
+<li>項目3: マイコン</li>
+</ul>
+<ol>
+<li>最初のステップ</li>
+<li>次のステップ</li>
+<li>最後のステップ</li>
+</ol>
+<h3>コードブロック</h3>
+<pre><code class="language-python">def hello():
+    print(&quot;Hello, World!&quot;)</code></pre>
+<h3>引用</h3>
+<blockquote><p>何かをすると決めたら必要な分を一気に学習してやり遂げる。</p></blockquote>
+<h3>テーブル</h3>
+<table>
+<thead>
+<tr>
+<th>技術</th>
+<th>経験</th>
+<th>備考</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>VR</td>
+<td>2年</td>
+<td>Unity</td>
+</tr>
+<tr>
+<td>マイコン</td>
+<td>3年</td>
+<td>Arduino, ESP32</td>
+</tr>
+<tr>
+<td>Web</td>
+<td>1年</td>
+<td>HTML/CSS/JS</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<p>以上がテスト記事の内容です。</p>
+    </div>
+    
+  </article>
+
+  <!-- Footer -->
+  <footer class="footer" style="margin-top: var(--space-section);">
+    <div class="container">
+      <p>&copy; 2025 橋本 空輝. All rights reserved.</p>
+    </div>
+  </footer>
+
+  <script src="../../assets/js/main.js"></script>
+  <script type="module">
+    // Load Mermaid.js only when mermaid blocks exist
+    if (document.querySelector('.mermaid')) {
+      import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs')
+        .then(function (mod) {
+          mod.default.initialize({
+            startOnLoad: false,
+            theme: 'default',
+            fontFamily: '"Inter", "Noto Sans JP", sans-serif'
+          });
+          mod.default.run({ querySelector: '.mermaid' }).then(function() {
+            // Add click-to-zoom functionality to mermaid diagrams
+            document.querySelectorAll('.mermaid').forEach(function(el) {
+              el.style.cursor = 'zoom-in';
+              el.title = 'クリックして拡大';
+              el.addEventListener('click', function() {
+                const svg = el.querySelector('svg');
+                if (!svg) return;
+
+                // Create modal
+                const modal = document.createElement('div');
+                modal.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.9);z-index:10000;display:flex;align-items:center;justify-content:center;cursor:zoom-out;';
+
+                // Clone SVG for modal
+                const clonedSvg = svg.cloneNode(true);
+                clonedSvg.style.cssText = 'max-width:95%;max-height:95%;background:white;border-radius:8px;';
+
+                modal.appendChild(clonedSvg);
+                document.body.appendChild(modal);
+
+                // Close on click
+                modal.addEventListener('click', function() {
+                  document.body.removeChild(modal);
+                });
+
+                // Close on Escape key
+                const closeOnEscape = function(e) {
+                  if (e.key === 'Escape') {
+                    document.body.removeChild(modal);
+                    document.removeEventListener('keydown', closeOnEscape);
+                  }
+                };
+                document.addEventListener('keydown', closeOnEscape);
+              });
+            });
+          });
+        });
+    }
+  </script>
+</html>

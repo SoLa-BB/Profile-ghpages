@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Godot_Multigpu_Data_Flow — 橋本 空輝</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../assets/css/style.css">
+  <link rel="icon" href="../../assets/images/favicon.svg" type="image/svg+xml">
+</head>
+<body>
+
+  <!-- Navigation -->
+  <nav class="nav">
+    <div class="nav__inner">
+      <a href="../../index.html" class="nav__logo">S. Hashimoto</a>
+      <button class="nav__toggle" aria-label="メニュー" aria-expanded="false">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+      <ul class="nav__links">
+        <li><a href="../../index.html" class="nav__link">ホーム</a></li>
+        <li><a href="../../works.html" class="nav__link">実績</a></li>
+        <li><a href="../../research.html" class="nav__link">研究</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <!-- Article -->
+  <article class="container">
+    <header class="article-header">
+      <div class="article-header__date">2026-04-12</div>
+      <h1 class="article-header__title">Godot_Multigpu_Data_Flow</h1>
+    </header>
+    <div class="article-content">
+      <h1>Godot マルチ GPU 分散描画 — データフロー詳細図</h1>
+<p>本ドキュメントは、Godot エンジン上で異種 GPU（NVIDIA RTX 2080 Ti + GTX 1080）を組み合わせた分散描画システムのデータフローを図解するものである。VR 環境において特定メッシュの描画を 2 枚目の GPU にオフロードし、Win32 共有メモリを介してフレームデータを転送、深度テスト付きアルファ合成で最終映像を統合する。</p>
+<hr>
+<h2>最終アーキテクチャ: システム全体のデータフロー</h2>
+<p>本システムは、メインプロセス（RTX 2080 Ti で通常シーンを描画）とサブプロセス（GTX 1080 でオフロード対象メッシュを描画）の 2 つの Godot インスタンスで構成される。両プロセスは OS のプロセス境界で完全に分離されており、Win32 共有メモリ（<code>CreateFileMappingW</code> / <code>MapViewOfFile</code>）でデータを交換し、Win32 Auto-Reset Event（<code>CreateEventW</code> / <code>SetEvent</code> / <code>WaitForSingleObject</code>）でフレーム単位の書き込み完了通知を行う。</p>
+<p>サブプロセスは、GPU で描画したカラー（RGBA16F）とデプス（float32）を非同期 readback で CPU へ回収し、共有メモリのダブルバッファへ書き込んだ後、イベントをシグナルする。メインプロセス側では、専用のワーカースレッドがイベント待機 → <code>memcpy</code> で永続ステージングバッファへ転送 → フラグ更新を行い、メインスレッドの <code>_process()</code> はフラグを確認して Vulkan DMA コマンド（<code>vkCmdCopyBufferToImage</code>）を投入するだけで済む。最終合成は CompositorEffect の Compute Shader が担い、メインシーンとサブシーンのカラー・デプスをピクセル単位で比較統合する。</p>
+<pre class="mermaid">
+graph TB
+    subgraph MainProcess["メインプロセス — RTX 2080 Ti（通常シーン描画 + 合成）"]
+        direction TB
+        MainGPU["🎮 メイン GPU<br/>RTX 2080 Ti<br/>通常シーン描画"]
+        CE["CompositorEffect<br/>Reverse-Z 深度比較<br/>+ Alpha Over 合成"]
+        MainTex["GPU テクスチャ<br/>(カラー + デプス)"]
+        Staging["永続ステージングバッファ<br/>HOST_VISIBLE + HOST_COHERENT<br/>起動時に確保、永続マッピング"]
+        Worker["ワーカースレッド<br/>共有メモリ → ステージング memcpy"]
+        Process["_process() メインスレッド<br/>フラグ監視 + DMA コマンド投入"]
+    end
+
+    subgraph SubProcess["サブプロセス — GTX 1080（オフロードメッシュ描画）"]
+        direction TB
+        SubGPU["🎮 サブ GPU<br/>GTX 1080<br/>オフロード対象メッシュ描画"]
+        Readback["非同期 Readback<br/>GPU VRAM → CPU メモリ"]
+        SubSHMWrite["共有メモリ書き込み<br/>カラー + デプス"]
+    end
+
+    subgraph SHM["Win32 共有メモリ（CreateFileMappingW）"]
+        direction LR
+        ColorBuf["カラーバッファ<br/>RGBA16F 1920×1080<br/>約 16.5MB × 2面（ダブルバッファ）"]
+        DepthBuf["デプスバッファ<br/>float32 1920×1080<br/>約 8.2MB × 2面（ダブルバッファ）"]
+        TransBuf["トランスフォームバッファ<br/>80B（位置/回転/カメラパラメータ）"]
+        InitBuf["初期化バッファ<br/>2048B JSON"]
+    end
+
+    subgraph Sync["同期機構"]
+        Event["Win32 Auto-Reset Event<br/>フレーム書き込み完了通知"]
+    end
+
+    %% サブプロセスのフロー: 描画 → readback → 共有メモリ書き込み → イベントシグナル
+    SubGPU -->|"描画実行"| Readback
+    Readback -->|"readback 完了コールバック"| SubSHMWrite
+    SubSHMWrite -->|"カラーデータ書き込み"| ColorBuf
+    SubSHMWrite -->|"デプスデータ書き込み"| DepthBuf
+    SubSHMWrite -->|"SetEvent で完了通知"| Event
+
+    %% メイン → サブ: 姿勢同期（毎フレーム）
+    Process -->|"カメラ姿勢を書き込み"| TransBuf
+    TransBuf -->|"姿勢を読み取り"| SubGPU
+
+    %% 起動時初期化: 解像度・フォーマット等を JSON で通知
+    MainProcess -.->|"起動時に初期化 JSON を書き込み"| InitBuf
+    InitBuf -.->|"起動時に読み取り"| SubProcess
+
+    %% メインプロセスのフロー: イベント待機 → memcpy → DMA → 合成
+    Event -->|"イベントシグナル受信"| Worker
+    ColorBuf -->|"memcpy でコピー"| Worker
+    DepthBuf -->|"memcpy でコピー"| Worker
+    Worker -->|"永続マッピングポインタへ<br/>memcpy"| Staging
+    Process -->|"完了フラグ確認"| Staging
+    Staging -->|"vkCmdCopyBufferToImage<br/>GPU DMA 転送"| MainTex
+    MainTex --> CE
+    MainGPU --> CE
+    CE -->|"最終フレーム出力"| Output["🖥️ ディスプレイ"]
+</pre>
+<hr>
+<h2>深度合成パイプライン: メインシーンとサブシーンの統合</h2>
+<p>メインプロセスが描画した通常シーンと、サブプロセスが描画したオフロード対象メッシュを、最終的にピクセル単位で合成する処理の詳細を示す。</p>
+<p>合成は Godot の CompositorEffect として Compute Shader（<code>compositor_effect_ipc.glsl</code>）で実行する。4 つの入力テクスチャ（メインのカラーとデプス、サブのカラーとデプス）を受け取り、各ピクセルについて以下の手順で処理する。</p>
+<ol>
+<li><strong>透明画素の早期棄却</strong>: サブ側のアルファ値が 0.001 以下であれば、そのピクセルにはサブ側の描画が存在しないため、メイン側のカラーをそのまま出力する</li>
+<li><strong>深度比較（Reverse-Z）</strong>: Godot は Reverse-Z 深度バッファ（近い物体ほど値が大きい）を使用するため、<code>d_sub &gt; d_main</code> のときサブ側が手前と判定する</li>
+<li><strong>アルファ合成（Over 演算）</strong>: サブが手前の場合、pre-multiplied alpha Over 演算 <code>C_out = C_sub + C_main × (1 - A_sub)</code> で半透明を含む自然な合成を行う</li>
+</ol>
+<pre class="mermaid">
+graph LR
+    MainColor["メイン カラー<br/>（通常シーンの描画結果）"] --> Shader["Compute Shader<br/>compositor_effect_ipc.glsl"]
+    MainDepth["メイン デプス<br/>（通常シーンの深度バッファ）"] --> Shader
+    SubColor["サブ カラー<br/>（共有メモリ経由で受信）"] --> Shader
+    SubDepth["サブ デプス<br/>（共有メモリ経由で受信）"] --> Shader
+
+    Shader -->|"ピクセル単位で処理"| Logic{"d_sub > d_main ?<br/>（Reverse-Z: 値が大きい方が手前）"}
+    Logic -->|"Yes: サブが手前"| Over["Over 合成<br/>C_sub + C_main × (1 - A_sub)"]
+    Logic -->|"No: メインが手前"| Keep["メインのカラーを維持"]
+    Over --> Final["最終出力"]
+    Keep --> Final
+</pre>
+    </div>
+    
+  </article>
+
+  <!-- Footer -->
+  <footer class="footer" style="margin-top: var(--space-section);">
+    <div class="container">
+      <p>&copy; 2025 橋本 空輝. All rights reserved.</p>
+    </div>
+  </footer>
+
+  <script src="../../assets/js/main.js"></script>
+  <script type="module">
+    // Load Mermaid.js only when mermaid blocks exist
+    if (document.querySelector('.mermaid')) {
+      import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs')
+        .then(function (mod) {
+          mod.default.initialize({
+            startOnLoad: false,
+            theme: 'default',
+            fontFamily: '"Inter", "Noto Sans JP", sans-serif'
+          });
+          mod.default.run({ querySelector: '.mermaid' }).then(function() {
+            // Add click-to-zoom functionality to mermaid diagrams
+            document.querySelectorAll('.mermaid').forEach(function(el) {
+              el.style.cursor = 'zoom-in';
+              el.title = 'クリックして拡大';
+              el.addEventListener('click', function() {
+                const svg = el.querySelector('svg');
+                if (!svg) return;
+
+                // Create modal
+                const modal = document.createElement('div');
+                modal.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.9);z-index:10000;display:flex;align-items:center;justify-content:center;cursor:zoom-out;';
+
+                // Clone SVG for modal
+                const clonedSvg = svg.cloneNode(true);
+                clonedSvg.style.cssText = 'max-width:95%;max-height:95%;background:white;border-radius:8px;';
+
+                modal.appendChild(clonedSvg);
+                document.body.appendChild(modal);
+
+                // Close on click
+                modal.addEventListener('click', function() {
+                  document.body.removeChild(modal);
+                });
+
+                // Close on Escape key
+                const closeOnEscape = function(e) {
+                  if (e.key === 'Escape') {
+                    document.body.removeChild(modal);
+                    document.removeEventListener('keydown', closeOnEscape);
+                  }
+                };
+                document.addEventListener('keydown', closeOnEscape);
+              });
+            });
+          });
+        });
+    }
+  </script>
+</html>

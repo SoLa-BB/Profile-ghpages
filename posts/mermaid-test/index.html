@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mermaid テスト — 橋本 空輝</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../assets/css/style.css">
+  <link rel="icon" href="../../assets/images/favicon.svg" type="image/svg+xml">
+</head>
+<body>
+
+  <!-- Navigation -->
+  <nav class="nav">
+    <div class="nav__inner">
+      <a href="../../index.html" class="nav__logo">S. Hashimoto</a>
+      <button class="nav__toggle" aria-label="メニュー" aria-expanded="false">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+      <ul class="nav__links">
+        <li><a href="../../index.html" class="nav__link">ホーム</a></li>
+        <li><a href="../../works.html" class="nav__link">実績</a></li>
+        <li><a href="../../research.html" class="nav__link">研究</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <!-- Article -->
+  <article class="container">
+    <header class="article-header">
+      <div class="article-header__date">2025-03-08</div>
+      <h1 class="article-header__title">Mermaid テスト</h1>
+    </header>
+    <div class="article-content">
+      <h1>Mermaid 図のテスト</h1>
+<p>これはMermaid.jsによるクライアントサイド描画のテストです。</p>
+<h2>フローチャート</h2>
+<pre class="mermaid">
+graph TD
+    A[ユーザー] -->|MDファイル配置| B[content/]
+    B --> C{方法を選択}
+    C -->|CLI変換| D[md2html.py]
+    C -->|ビューア| E[viewer.html]
+    D --> F[静的HTML生成]
+    E --> G[クライアントサイド表示]
+</pre>
+<h2>シーケンス図</h2>
+<pre class="mermaid">
+sequenceDiagram
+    participant U as ユーザー
+    participant V as viewer.html
+    participant M as Mermaid.js
+    U->>V: ?file=content/posts/article.md
+    V->>V: fetch(MDファイル)
+    V->>V: パース & HTML変換
+    V->>M: Mermaidブロック検出
+    M->>M: SVGレンダリング
+    M-->>U: 図が表示される
+</pre>
+<h2>通常のコードブロック</h2>
+<p>通常のコードブロックはHTMLエスケープされます：</p>
+<pre><code class="language-python">def hello():
+    print(&quot;&lt;h1&gt;Hello, World!&lt;/h1&gt;&quot;)</code></pre>
+<p>以上。</p>
+    </div>
+    
+  </article>
+
+  <!-- Footer -->
+  <footer class="footer" style="margin-top: var(--space-section);">
+    <div class="container">
+      <p>&copy; 2025 橋本 空輝. All rights reserved.</p>
+    </div>
+  </footer>
+
+  <script src="../../assets/js/main.js"></script>
+  <script type="module">
+    // Load Mermaid.js only when mermaid blocks exist
+    if (document.querySelector('.mermaid')) {
+      import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs')
+        .then(function (mod) {
+          mod.default.initialize({
+            startOnLoad: false,
+            theme: 'default',
+            fontFamily: '"Inter", "Noto Sans JP", sans-serif'
+          });
+          mod.default.run({ querySelector: '.mermaid' }).then(function() {
+            // Add click-to-zoom functionality to mermaid diagrams
+            document.querySelectorAll('.mermaid').forEach(function(el) {
+              el.style.cursor = 'zoom-in';
+              el.title = 'クリックして拡大';
+              el.addEventListener('click', function() {
+                const svg = el.querySelector('svg');
+                if (!svg) return;
+
+                // Create modal
+                const modal = document.createElement('div');
+                modal.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.9);z-index:10000;display:flex;align-items:center;justify-content:center;cursor:zoom-out;';
+
+                // Clone SVG for modal
+                const clonedSvg = svg.cloneNode(true);
+                clonedSvg.style.cssText = 'max-width:95%;max-height:95%;background:white;border-radius:8px;';
+
+                modal.appendChild(clonedSvg);
+                document.body.appendChild(modal);
+
+                // Close on click
+                modal.addEventListener('click', function() {
+                  document.body.removeChild(modal);
+                });
+
+                // Close on Escape key
+                const closeOnEscape = function(e) {
+                  if (e.key === 'Escape') {
+                    document.body.removeChild(modal);
+                    document.removeEventListener('keydown', closeOnEscape);
+                  }
+                };
+                document.addEventListener('keydown', closeOnEscape);
+              });
+            });
+          });
+        });
+    }
+  </script>
+</html>
