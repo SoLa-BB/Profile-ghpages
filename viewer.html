@@ -284,6 +284,16 @@
       return params.get("file") || params.get("f");
     }
 
+    function getQueryMeta() {
+      var params = new URLSearchParams(window.location.search);
+      return {
+        title: params.get("title") || "埋め込みビュー",
+        date: params.get("date") || "",
+        pdf: params.get("pdf") || "",
+        slides: params.get("slides") || ""
+      };
+    }
+
     function render(mdText) {
       var parsed = parseFrontMatter(mdText);
       var meta = parsed.meta;
@@ -308,6 +318,19 @@
       // Load Mermaid.js only when needed
       if (result.hasMermaid) {
         loadMermaid();
+      }
+    }
+
+    function renderStandaloneEmbeds() {
+      var meta = getQueryMeta();
+      document.title = meta.title + " — 橋本 空輝";
+      document.getElementById("viewer-title").textContent = meta.title;
+      document.getElementById("viewer-date").textContent = meta.date;
+      document.getElementById("viewer-content").innerHTML = "<p class=\"text-secondary\">埋め込みコンテンツを表示しています。</p>";
+
+      var embeds = generateEmbeds(meta);
+      if (embeds) {
+        document.getElementById("viewer-content").insertAdjacentHTML("afterend", embeds);
       }
     }
 
@@ -336,10 +359,15 @@
     // --- Init ---
     var filePath = getFileParam();
     if (!filePath) {
-      showError(
-        'ファイルが指定されていません。<br>' +
-        '<code>viewer.html?file=content/posts/my-article.md</code> のようにURLパラメータで指定してください。'
-      );
+      var standaloneMeta = getQueryMeta();
+      if (standaloneMeta.pdf || standaloneMeta.slides) {
+        renderStandaloneEmbeds();
+      } else {
+        showError(
+          'ファイルが指定されていません。<br>' +
+          '<code>viewer.html?file=content/posts/my-article.md</code> のようにURLパラメータで指定してください。'
+        );
+      }
     } else {
       fetch(filePath)
         .then(function (res) {
