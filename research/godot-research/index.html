@@ -35,6 +35,10 @@
       <div class="article-header__date">2026-03-07</div>
       <h1 class="article-header__title">Godotエンジンを用いたマルチGPU分散描画システムの実装と検証</h1>
     </header>
+        <div class="embed-container" style="margin-top: var(--space-l);">
+      <div class="embed-label" style="padding: var(--space-s) var(--space-s) 0;">発表スライド</div>
+      <iframe src="https://docs.google.com/presentation/d/e/2PACX-1vSlSFQ_tnJHWw4wsw6Pgc2f1dEKndD274RfdFKaoD4-V75zIYaZUu08mh-Gn1aKDEzvyaulbNxCdBDC/pubembed?start=false&loop=false&delayms=30000" width="100%" height="540" allowfullscreen></iframe>
+    </div>
     <div class="article-content">
       <h1>概要</h1>
 <p>本稿は、VR環境における描画負荷をアプリケーション層で複数GPU間に分散するシステムの実装結果を報告する。メインプロセス（RTX 2080 Ti）がシーン全体の描画・合成を担当し、サブプロセス（GTX 1080）が指定メッシュのみをオフロードする二層構造を採用した。プロセス間通信に共有メモリとWin32 Auto-Reset Eventを使用し、深度テスト付きアルファ合成により両GPU描画結果を統合する。メインプロセス144fps、サブプロセス約100fpsで安定動作する実装を達成した。</p>
@@ -48,7 +52,7 @@
 <p>マルチGPUレンダリング技術は大別して三種類に分類される。</p>
 <p><strong>AFR（Alternate Frame Rendering）/SFR（Split Frame Rendering）</strong>: 2000年代のドライバベース技術であり、AFRは各フレームを異なるGPUに割り当て、SFRはフレーム内の領域を分割して描画する。この時代は計算能力が主たるボトルネックであったため、複数GPUで並列計算することで計算量の線形スケーリングを実現しようとした。これらの手法では描画結果がGPUに留まるため、プロセス間のデータ転送は最小限に抑えられていた。</p>
 <p><strong>Sort-last rendering</strong>: グラフィクス分野で提案されたリサーチテーマであり、各GPUが異なる部分ジオメトリを独立して描画し、最終合成ステップで結果をマージする手法である。ピクセルレベルの深度テストを伴うため、メインメモリ経由での転送が必然的になり、PCIeバス帯域（当時のPCIe 2.0で最大8GB/s）が新たなボトルネックとなる。レイテンシが無視できなくなるため、実時間性が要求されるアプリケーションでは採用されなかった。</p>
-<p><strong>OpenGL 異種GPU 対応（GL_NV_gpu_affinity、GL_AMD_gpu_association）</strong>: 2010年代にNVIDIAとAMDが導入したアプリケーション層での異種GPU割り当てAPIである。しかし、VRAM間データ転送がやはりメインメモリ経由であることから、大容量テクスチャアセットを多用するコンテンツでは帯域枯渇が頻発するようになった。</p>
+<p><strong>DirectX12 Explicit Multi Adapter</strong>: 2010年代にDirectX 12で導入された異種GPU割り当てAPIである。しかし、採用コストの高さが普及の障壁となった。EMAはDirect3D 12という低レベルグラフィクスAPIを直接操作する形で設計されており、アダプターの列挙・ヒープ設計・リソースの手動マイグレーションなど、膨大な実装工数をゲームエンジン・タイトル側の開発者に要求する。この負担から「EMAは企画倒れ」と評されるケースが多く、実際に製品レベルで採用したゲームタイトルはほとんど存在しない。グラフィクスAPIをアプリケーション側で切り替えること自体が技術的難易度の高い作業であり、ゲーム制作チームがこれを主体的に取り組むインセンティブが得られにくかったことも普及の障壁となった。</p>
 <h3>従来の問題の本質</h3>
 <p>これらの技術が普及しなかった根本原因は、<strong>計算能力とVRAM容量のバランスの変化を見落とした点</strong>にある。2000年代～2010年代は、VRAM容量（256MB～1GB）に対して計算能力が相対的に不足していたため、AFR/SFRはこの計算能力の不足という時代的ボトルネックに最適化された技術だった。</p>
 <p>ところが、VRおよび高解像度コンテンツの普及により、状況は根本的に反転している。HMD解像度が3K～6Kに達するにつれてテクスチャメモリが枯渇する傾向が見られ、一方ではGPU計算能力が飽和の傾向を示すようになった。特にVRでは、ユーザーがオブジェクトを間近に視認するため詳細なテクスチャ解像度が必須となり、VRAM容量の枯渇が顕著な問題として浮上している。</p>
@@ -98,7 +102,6 @@ graph LR
     MT -->|"DMA コマンド投入"| RT
     RT --> CE
 </pre>
-<p><img src="image_placeholder_system_architecture.png" alt="システムアーキテクチャ図"></p>
 <h2>共有メモリレイアウト</h2>
 <p>共有メモリは固定長で設計される。レイアウトは表1のとおりである。</p>
 <table>
@@ -183,7 +186,6 @@ graph LR
     M3 -->|"call_on_render_thread()"| M4
     M4 --> M5 --> M6
 </pre>
-<p><img src="image_placeholder_data_transfer_pipeline.png" alt="データ転送パイプライン"></p>
 <p>各段階は異なるスレッド/ハードウェアユニットで実行され、パイプライン化による並列処理が実現される。</p>
 <h2>Godotエンジンへの新規API</h2>
 <p>標準の<code>texture_update()</code>API内では毎フレーム一時ステージングバッファを同期的に確保・破棄するため、大容量データ転送に不適切である。本システムでは、RenderingDeviceに3つのAPIを追加した。</p>
@@ -271,17 +273,12 @@ graph LR
 <h3>ステップ2：深度比較</h3>
 <p>Godot/Vulkanは Reverse-Z 深度バッファを使用する。深度値が大きいほど物体が近い。条件<code>d_sub &gt; d_main</code>でサブが手前と判定される。</p>
 <h3>ステップ3：アルファ合成</h3>
-<p>サブが手前の場合、Pre-multiplied Alpha Over演算を適用する。</p>
-<p>$$C_{\text{out}} = C_{\text{sub}} + C_{\text{main}} \times (1 - A_{\text{sub}})$$<br>
-$$A_{\text{out}} = A_{\text{sub}} + A_{\text{main}} \times (1 - A_{\text{sub}})$$</p>
-<p>サブが奥にある場合はメイン側カラーを維持する。</p>
-<p><img src="image_placeholder_depth_compositing.png" alt="深度合成アルゴリズム"></p>
+<p>サブが手前の場合、Pre-multiplied Alpha Over演算を適用し、サブが奥にある場合はメイン側カラーを維持する。</p>
 <h2>Compute Shader の並列処理</h2>
 <p>Compute Shaderは8×8のスレッドグループで各ピクセルを並列処理し、ピクセルレベルの正確な合成を実現する。</p>
 <h1>MGPUMeshInstance3D</h1>
 <p>オフロード対象メッシュの指定は、<code>MGPUMeshInstance3D</code>コンポーネントとして集約される。シーン構築者は通常の<code>MeshInstance3D</code>の代わりにこのノードをアタッチするだけで、内部IPCを意識せずにオフロードを設定できる。</p>
 <p><code>MGPUMeshInstance3D</code>は<code>_ready()</code>時に自身を非表示に設定し（メインプロセスでは非表示）、<code>mgpu_mesh_instances</code>グループに登録される。メインプロセスはこのグループからノードを検出し、<code>get_init_payload()</code>でメッシュ・マテリアルパスを取得、Init Buffer経由でサブプロセスに送信する。サブプロセスは受信したパスからリソースをロードし、自身のシーン内で描画を行う。</p>
-<p><img src="image_placeholder_mgpu_mesh_instance.png" alt="MGPUMeshInstance3D構成"></p>
 <h1>プロトコル設計</h1>
 <h2>CMD FIFO</h2>
 <p>Main ↔ Sub の双方向コマンド送信に、固定スロットFIFOを使用する（表3）。</p>
@@ -376,7 +373,6 @@ $$A_{\text{out}} = A_{\text{sub}} + A_{\text{main}} \times (1 - A_{\text{sub}})$
 <li>転送帯域：1920×1080 RGBA16F + float32で約50MB/フレーム</li>
 </ul>
 <p>PCIe 3.0バスは理論値16GB/sであり、50MB/フレームは十分に処理可能である。ワーカースレッドでのmemcpyが重いにもかかわらず、メインスレッドの<code>_process()</code>処理が軽量であるため、メイン描画フレームレートへの影響は生じない。</p>
-<p><img src="image_placeholder_performance_results.png" alt="性能測定結果"></p>
 <h1>考察</h1>
 <h2>設計上の重要な決定事項</h2>
 <p>本システムで採用した主要な設計原則を整理する。</p>
@@ -392,7 +388,7 @@ $$A_{\text{out}} = A_{\text{sub}} + A_{\text{main}} \times (1 - A_{\text{sub}})$
 <p>これらの設計原則はVRに限定されない。映像合成、遠隔レンダリング、計測可視化など、転送と描画が絡む高負荷リアルタイムシステム全般に適用可能である。</p>
 <p>特に、プロセス分離型アーキテクチャはネットワーク化が容易であり、サブ描画を別マシンへ移行することも可能である。</p>
 <h2>本研究の新規性</h2>
-<p>本システムの新規性は、<strong>VRSNS特有の制約条件下で従来不採用だったSort-last型手法を復権させた点</strong>にある。以下、その根拠を述べる。</p>
+<p>本システムの新規性は、<strong>VRSNS特有の制約条件下で従来不採用だったSort-last型手法が採用される点</strong>にある。以下、その根拠を述べる。</p>
 <h3>新たなボトルネック構造</h3>
 <p>2000年代のSort-lastが不採用だった理由は、入力遅延感度の高さにあり、背景には計算能力がボトルネックだったという事情が存在していた。しかし、VRSNSでは状況が異なる。</p>
 <ul>
@@ -410,13 +406,11 @@ $$A_{\text{out}} = A_{\text{sub}} + A_{\text{main}} \times (1 - A_{\text{sub}})$
 <li><strong>メモリ解放</strong>：視野外になったアバターをサブから除去し、VRAM圧力を軽減する</li>
 </ol>
 <p>このアプローチは従来のSort-lastにはない動的特性をもたらす。描画対象の距離や視認性に応じてGPU間のメモリ配置を実時間で最適化することにより、固定的な分割では実現不可能な総VRAM効率の向上が実現される。特にVRメタバースでは、ユーザー周辺のアバター数が時々刻々変化するため、このような動的戦略の効果が顕著に現れるはずである。</p>
-<p><img src="image_placeholder_dynamic_memory_allocation.png" alt="動的メモリ配置戦略"></p>
 <h1>まとめ</h1>
 <p>本稿は、Godotエンジン上でマルチGPU分散描画を実装したシステムの設計と実装結果を報告した。プロセス間通信に共有メモリとWin32 Eventを採用し、永続ステージングバッファとGPU DMA転送によりデータ転送パイプラインを最適化している。Compute Shaderによる深度合成により、両GPU描画結果をピクセル単位で正確に統合する。</p>
 <p>メインプロセス144fps、サブプロセス約100fpsで安定動作し、メイン側処理は1ms未満に収まるため、VR用途に適した性能が達成されている。</p>
 <p>本システムの本質的な意義は、VRSNSドメイン固有の特性（入力遅延許容度の高さ、VRAMボトルネック）に基づき、従来不採用だったSort-last型手法を復権させたことにある。さらに、カメラ位置やユーザー視野に基づくリアルタイムなVRAM配置最適化により、将来的な動的マルチメッシュ対応が実現可能になり、高密度アバター環境での描画効率の大幅な向上が期待される。</p>
     </div>
-    
   </article>
 
   <!-- Footer -->
